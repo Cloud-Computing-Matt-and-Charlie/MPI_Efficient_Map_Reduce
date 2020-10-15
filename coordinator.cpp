@@ -63,6 +63,8 @@ void combine_buffers();
 void combine_all_buffers(char*); 
 void add_buffer_to_map; 
 int* batmen; 
+int* robins; 
+int file_len; 
 
 
 
@@ -282,6 +284,26 @@ int main(int argc, char **argv)
         //I am master 
         do_map()
     else
+    	//ifstream fl(File_Path, ios::binary | ios::in);
+        int num_recievers = world_size - 2; 
+        ifstream fl(FILE_PATH, ios::in);
+	    fl.seekg( 0, ios::end );
+	    size_t len = fl.tellg();
+	    file_len = (int)len;
+        fl.seekg(0, ios::beg); 
+        vector<int> offsets; 
+        int total = 0; 
+        int count = 0; 
+        int ave_size = file_len/num_recievers; 
+        for (int i = 0; i<num_recievers; i++)
+        {
+            offsets.push_back(i*ave_size); 
+        }
+        for (int i = 0; i<num_recievers; i++)
+
+
+
+
         // I am a reducer 
         // find out what my range is 
             //code here handle boarder words 
@@ -316,3 +338,5 @@ static void number_as_chars(int num, char *dest) {
     }
     dest[i] = '\0';
 }
+
+int 
