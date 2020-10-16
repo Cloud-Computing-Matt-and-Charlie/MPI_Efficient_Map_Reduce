@@ -1,4 +1,5 @@
 
+
 /*
 
 Set up: 
@@ -126,8 +127,9 @@ void do_reduce_sidekick(reduceArgs* input_args)
         while (outboxSize > 0)
         {
             //MPI_TEST on intraNodeOutputStatuses[outboxTail]
-            if (MPI_Test(intraNodeOutboxStatuses[outboxTail], &send_complete_flag, 
-                &send_status))
+            MPI_Test(intraNodeOutboxStatuses[outboxTail], &send_complete_flag, 
+                &send_status);
+            if (send_complete_flag)
             {
                 outboxTail = ((outboxTail + 1)%INTRANODE_OUTBOX_SIZE); 
                 outboxSize--; 
@@ -148,7 +150,7 @@ void do_reduce_sidekick(reduceArgs* input_args)
             is_last = (current_index < input_args->stop_read_loc) ? 0 : 1; 
 
             intraNodeOutboxStatuses[outboxHead] = new MPI_Request; 
-            printf("%s : Count = %d Flag = %d \n", debug_id, dum_count, is_last); 
+            printf("%s : Count = %d Flag = %d Outbox Size = %d \n", debug_id, dum_count, is_last, outboxSize); 
             MPI_Isend(intraNodeOutbox[outboxHead], intraNodeOutboxLengths[outboxHead], MPI_CHAR, 
                 input_args->my_partner, is_last, MPI_COMM_WORLD, intraNodeOutboxStatuses[outboxHead]);
             //incrament pointers 
@@ -418,4 +420,5 @@ void flatten_map(char* output, int& _current_index, map<string, int> input_map, 
     }
     return; 
 }
+
 
