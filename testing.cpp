@@ -1,5 +1,6 @@
 
 
+
 /*
 
 Set up: 
@@ -56,12 +57,14 @@ int world_size;
 #define MAX_NUM_SIZE 10
 #define MAX_WORD_SIZE 50 
 #define INPUT_FILE_PATH "2600.txt"
+#define PRINT_EXCHANGE_NUMS 0
 
 //we could combine these for efficiency 
-const int general_buff_size = INTRANODE_BLOCK_SIZE*(MAX_WORD_SIZE + MAX_NUM_SIZE); 
-char intraNodeOutbox[INTRANODE_OUTBOX_SIZE][general_buff_size];
+const int INTRA_BUFF_SIZE = INTRANODE_BLOCK_SIZE*(MAX_WORD_SIZE + MAX_NUM_SIZE); 
+const int INTER_BUFF_SIZE = INTERNODE_BLOCK_SIZE*(MAX_WORD_SIZE + MAX_NUM_SIZE); 
+char intraNodeOutbox[INTRANODE_OUTBOX_SIZE][INTRA_BUFF_SIZE];
 int intraNodeOutBoxLengths[INTRANODE_OUTBOX_SIZE];
-char interNodeOutbox[INTERNODE_OUTBOX_SIZE][general_buff_size];
+char interNodeOutbox[INTERNODE_OUTBOX_SIZE][INTRA_BUFF_SIZE];
 int intraNodeOutboxLengths[INTRANODE_OUTBOX_SIZE];
 int interNodeOutboxLengths[INTERNODE_OUTBOX_SIZE];
 MPI_Request* intraNodeOutboxStatuses[INTRANODE_OUTBOX_SIZE]; 
@@ -69,18 +72,21 @@ MPI_Request* interNodeOutboxStatuses[INTERNODE_OUTBOX_SIZE];
 
 map<string, int> working_map; 
 
-char intraNodeBuffer[general_buff_size];
-char interNodeBuffer[general_buff_size];
+char intraNodeBuffer[INTRA_BUFF_SIZE];
+char interNodeBuffer[INTRA_BUFF_SIZE];
 int intraNodeBufferSize;
 int interNodeBufferSize; 
 int current_file_index; 
 
 
 void get_word(map<string, int>& output_map, ifstream& fl, int& current_index, int start_index,  int stop_index);
-void read_in_block(ifstream& fl, int start_index, int stop_index); 
+void read_in_block_intra(ifstream& fl, int start_index, int stop_index);
+void read_in_block_inter(ifstream& fl, int start_index, int stop_index, int can_combine);
 void flatten_map(char* output, int& current_index, map<string, int> input_map, int stop_index);
 static void prep_word(string& cword);
 static void number_as_chars(int num, char *dest, int& output_len); 
+void unflatten_map(char* input_chars, int& _current_index, map<string, int>& input_map, int stop_index);
+void read_in_block_inter_temp(ifstream& fl, int start_index, int stop_index);
 
 
 
@@ -119,7 +125,7 @@ void do_reduce_sidekick(reduceArgs* input_args)
         dum_count++; 
         //read in block from file 
         //if (outboxSize != INTRANODE_OUTBOX_SIZE) read_in_block(workingFD, current_index, 0);  
-        if (outboxSize != INTRANODE_OUTBOX_SIZE) read_in_block(*input_args->input_file, input_args->start_read_loc, input_args->stop_read_loc);
+        if (outboxSize != INTRANODE_OUTBOX_SIZE) read_in_block_intra(*input_args->input_file, input_args->start_read_loc, input_args->stop_read_loc);
 
         //read block adds data to map 
         
@@ -150,13 +156,13 @@ void do_reduce_sidekick(reduceArgs* input_args)
             is_last = (current_index < input_args->stop_read_loc) ? 0 : 1; 
 
             intraNodeOutboxStatuses[outboxHead] = new MPI_Request; 
-            printf("%s : Count = %d Flag = %d Outbox Size = %d \n", debug_id, dum_count, is_last, outboxSize); 
+            if (PRINT_EXCHANGE_NUMS) printf("%s : Count = %d Flag = %d Outbox Size = %d \n", debug_id, dum_count, is_last, outboxSize); 
             MPI_Isend(intraNodeOutbox[outboxHead], intraNodeOutboxLengths[outboxHead], MPI_CHAR, 
                 input_args->my_partner, is_last, MPI_COMM_WORLD, intraNodeOutboxStatuses[outboxHead]);
             //incrament pointers 
             outboxSize++; 
             outboxHead = ((outboxHead+1)%INTRANODE_OUTBOX_SIZE); 
-            if (is_last) printf("exiting sender %d -> %d \n", my_rank, input_args->my_partner); 
+            if (PRINT_EXCHANGE_NUMS) if (is_last) printf("exiting sender %d -> %d \n", my_rank, input_args->my_partner); 
             if (is_last) break; 
         }
 
@@ -211,18 +217,41 @@ void do_dumb_reduce(reduceArgs* input_args)
         MPI_Irecv(incoming_buffer, observed_size, MPI_CHAR, input_args->my_partner, terminate_flag,  
             MPI_COMM_WORLD, incoming_request);
 
-        printf("%s : Waiting on Count = %d Flag = %d \n", debug_id, total_recieved+1, terminate_flag); 
+        if (PRINT_EXCHANGE_NUMS) printf("%s : Waiting on Count = %d Flag = %d \n", debug_id, total_recieved+1, terminate_flag); 
         MPI_Wait(incoming_request, &check_status); 
+        read_in_block_inter_temp(*input_args->input_file, input_args->start_read_loc, input_args->stop_read_loc);
         //terminate_flag = check_status.MPI_TAG;
         
         total_recieved++; 
-        printf("%s : Count = %d Flag = %d \n", debug_id, total_recieved, terminate_flag); 
+        if (PRINT_EXCHANGE_NUMS) printf("%s : Count = %d Flag = %d \n", debug_id, total_recieved, terminate_flag); 
         if (terminate_flag) printf("Recieved last packet!! \n\n");
         if (terminate_flag) break; 
+
+        //PRINT MAP 
+        printf("%s Map Contents", debug_id); 
+        for (auto entry : working_map)
+        {
+            //printf("[ %s , %d] ", entry.first, entry.second);
+            cout<<" [ "<<entry.first<<", "<<entry.second<<"] "; 
+        }
+        printf("\n"); 
     }
 
     //NOTE: DO I NEED TO CLEAN UP, CHECK FOR ANY REMAINING MESSAGES??
 }    
+
+void do_dumb_master()
+{
+    vector<int> done_yet((world_size-2)/2, 0); 
+    while (accumulate(0, done_yet.begin(), done_yet.end(), 0) != ((world_size-2)/2))
+    {
+        MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &probe_flag, &check_status); 
+        if (!probe_flag) continue; 
+    }
+    MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &probe_flag, &check_status); 
+    if (!probe_flag) continue; 
+
+}
 
 
 int main(int argc, char **argv)
@@ -318,13 +347,40 @@ int main(int argc, char **argv)
     return 0;
 }
 
-void read_in_block(ifstream& fl, int start_index, int stop_index)
+void read_in_block_intra(ifstream& fl, int start_index, int stop_index)
 {
     int working_size = 0; 
-    while (working_size < (general_buff_size - MAX_WORD_SIZE - MAX_WORD_SIZE))
+    while (working_size < ( INTRA_BUFF_SIZE - MAX_WORD_SIZE - MAX_WORD_SIZE))
     {
         get_word(working_map, fl, current_file_index, start_index, min(current_file_index + MAP_SWEEP_LENGTH, stop_index)); 
-        flatten_map(intraNodeBuffer, working_size, working_map, general_buff_size); 
+        flatten_map(intraNodeBuffer, working_size, working_map, INTRA_BUFF_SIZE); 
+    }
+    return; 
+}
+void read_in_block_inter_temp(ifstream& fl, int start_index, int stop_index)
+{
+    int working_size = 0; 
+    int unflatten_current_index = 0; 
+    if (1) unflatten_map(intraNodeBuffer, unflatten_current_index, working_map, intraNodeBufferSize);
+    while (working_size < (INTER_BUFF_SIZE - MAX_WORD_SIZE - MAX_WORD_SIZE))
+    {
+
+        get_word(working_map, fl, current_file_index, start_index, min(current_file_index + MAP_SWEEP_LENGTH, stop_index)); 
+        flatten_map(intraNodeBuffer, working_size, working_map, INTER_BUFF_SIZE); 
+    }
+    return; 
+}
+
+void read_in_block_inter(ifstream& fl, int start_index, int stop_index, int can_combine)
+{
+    int working_size = 0; 
+    int unflatten_current_index = 0; 
+    if (can_combine) unflatten_map(intraNodeBuffer, unflatten_current_index , working_map, intraNodeBufferSize);
+    while (working_size < (INTER_BUFF_SIZE - MAX_WORD_SIZE - MAX_WORD_SIZE))
+    {
+
+        get_word(working_map, fl, current_file_index, start_index, min(current_file_index + MAP_SWEEP_LENGTH, stop_index)); 
+        flatten_map(intraNodeBuffer, working_size, working_map, INTER_BUFF_SIZE); 
     }
     return; 
 }
@@ -397,7 +453,26 @@ void get_word(map<string, int>& output_map, ifstream& fl, int& _current_index, i
     _current_index = fl.tellg(); 
     return; 
 }
+void unflatten_map(char* input_chars, int& _current_index, map<string, int>& input_map, int stop_index)
+{
+    char word_buffer[MAX_WORD_SIZE]; 
+    char num_buffer[MAX_NUM_SIZE];
+    int adding_number = 0; 
+    while (_current_index < stop_index)
+    {
+        //all ordered word, num, word, num etc each with null terminator 
+        //word 
+        string adding_word = input_chars+_current_index;
+        while(input_chars[_current_index++] != '/0') {}
+        //number
+        adding_number = atoi(input_chars+_current_index); 
+        while(input_chars[_current_index++] != '/0') {}
+        if (input_map.count(adding_word)) input_map[adding_word]+=adding_number; 
+        else input_map.insert(std::pair<string, int>(adding_word, adding_number)); 
 
+    }
+
+}
 void flatten_map(char* output, int& _current_index, map<string, int> input_map, int stop_index)
 {
     char num_buffer[MAX_NUM_SIZE];
@@ -407,6 +482,7 @@ void flatten_map(char* output, int& _current_index, map<string, int> input_map, 
         //do something 
         for (string::const_iterator  letter = it->first.begin(); letter!=it->first.end(); ++letter) 
             output[_current_index++] = *letter; 
+        output[_current_index++] = '\0'; //null terminate at end of every word
 
         number_as_chars(it->second, num_buffer, num_len); 
         for (int i = 0; i<num_len; i++)
@@ -420,5 +496,7 @@ void flatten_map(char* output, int& _current_index, map<string, int> input_map, 
     }
     return; 
 }
+
+
 
 
