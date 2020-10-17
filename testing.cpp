@@ -59,10 +59,10 @@ int world_size;
 #define MAX_NUM_SIZE 10
 #define MAX_WORD_SIZE 50 
 #define INPUT_FILE_PATH "2600.txt"
-#define PRINT_EXCHANGE_NUMS 0
+#define PRINT_EXCHANGE_NUMS 1
 #define PRINT_BATMEN_REDUCER_MAPS 0
 #define PRINT_MASTER_MAP 1
-#define PRINT_MASTER_MAP_PERIOD 10
+#define PRINT_MASTER_MAP_PERIOD 1
 #define MODE_WORD_CHAR 1
 
 //we could combine these for efficiency 
@@ -213,7 +213,6 @@ void do_dumb_reduce(reduceArgs* input_args)
                 MPI_COMM_WORLD, incoming_request);
             //Print what were waiting ot recieve 
             if (PRINT_EXCHANGE_NUMS) printf("%s : Waiting on Count = %d Flag = %d \n", debug_id_intra, total_recieved+1, robin_terminate_flag); 
-            //Blocking wait (change to non_blocking later)
             MPI_Wait(incoming_request, &incoming_status); 
 
             //Printing
@@ -291,34 +290,111 @@ void do_master_sidekick()
     vector<int> done_yet((world_size-2)/2, 0); 
     int incoming_source; 
     int incoming_tag; 
-    int incoming_size; 
+   //int incoming_size; 
     MPI_Status incoming_status; 
     MPI_Request* incoming_request; 
-    char incoming_buffer[INTER_BUFF_SIZE]; 
+    //char incoming_buffer[INTER_BUFF_SIZE]; 
     int unflatten_current_index = 0; 
     int probe_flag;
     int period_counter; 
+    int outboxHead = 0;
+    int outboxTail = 0;
+    int outboxSize = 0; 
+    int is_last; 
+    int send_complete_flag; 
+    MPI_Status send_status; 
     while (accumulate(done_yet.begin(), done_yet.end(), 0) != ((world_size-2)/2))
     {
+        //mark off recieved messages from outbox
+        while (outboxSize > 0) 
+        {
+            MPI_Test(interNodeOutboxRequests[outboxTail], &send_complete_flag, 
+                &send_status);
+            if (send_complete_flag)
+            {
+                outboxTail = ((outboxTail + 1)%INTERNODE_OUTBOX_SIZE); 
+                outboxSize--; 
+            }
+            else break; 
+        }
+        if (outboxSize > INTERNODE_OUTBOX_SIZE) continue; //wait till more space in outbox 
         //Get Incoming message info 
         MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &probe_flag, &incoming_status); 
         if (!probe_flag) continue; //no messages to recieve 
         incoming_request = new MPI_Request; 
         incoming_source = incoming_status.MPI_SOURCE; 
         incoming_tag = incoming_status.MPI_TAG; 
-        MPI_Get_count(&incoming_status, MPI_CHAR, &incoming_size);
+        MPI_Get_count(&incoming_status, MPI_CHAR, &interNodeBufferSize);
         done_yet[incoming_source] = incoming_tag; 
         //Recvieve incoming message 
-        MPI_Irecv(incoming_buffer, incoming_size, MPI_CHAR, incoming_source, incoming_tag,  
+        MPI_Irecv(interNodeBuffer, interNodeBufferSize, MPI_CHAR, incoming_source, incoming_tag,  
             MPI_COMM_WORLD, incoming_request);
         MPI_Wait(incoming_request, &incoming_status);
+        if (PRINT_EXCHANGE_NUMS) printf("Master Robin: Source =  %d Flag = %d \n", incoming_source, incoming_tag); 
+        if (outboxSize != INTERNODE_OUTBOX_SIZE)
+        {
+            interNodeOutboxLengths[outboxHead] = interNodeBufferSize; //Add to current buffer head of outbox 
+            interNodeBufferSize = 0; //Reset to 0 so we can write new things to this 
+            //Copy Inter buffer to Inter Outbox head
+            for (int i = 0; i<interNodeOutboxLengths[outboxHead]; i++) interNodeOutbox[outboxHead][i] = interNodeBuffer[i]; 
+            //If it is the last message we set the tag = 1 so Reciever knows to fuck off
+            is_last = (accumulate(done_yet.begin(), done_yet.end(), 0) == ((world_size-2)/2)) ? 1 : 0; 
+            //Non-blocking send of head
+            interNodeOutboxRequests[outboxHead] = new MPI_Request; 
+            MPI_Isend(interNodeOutbox[outboxHead], interNodeOutboxLengths[outboxHead], MPI_CHAR, 
+                master_batman, is_last, MPI_COMM_WORLD, interNodeOutboxRequests[outboxHead]);
+            //incrament pointers 
+            outboxSize++; 
+            outboxHead = ((outboxHead+1)%INTERNODE_OUTBOX_SIZE); 
+            if (is_last) break; 
+        }
+
+
+    }
+    //NOTE: cant leave without emptying outbox 
+    while (outboxSize > 0)
+    {
+    //MPI_TEST on intraNodeOutputStatuses[outboxTail]
+    MPI_Wait(interNodeOutboxRequests[outboxTail], &send_status); 
+    
+    outboxTail = ((outboxTail + 1)%INTERNODE_OUTBOX_SIZE); 
+    outboxSize--;
+
+    }
+
+
+}
+void do_master()
+{
+    int incoming_source; 
+    int incoming_tag; 
+    int incoming_size; 
+    MPI_Status incoming_status; 
+    MPI_Request* incoming_request; 
+    char incoming_buffer[INTER_BUFF_SIZE*2]; 
+    int unflatten_current_index = 0; 
+    int probe_flag;
+    int period_counter = 0; 
+
+    
+    while(!incoming_tag)
+    {
+        MPI_Iprobe(master_robin, MPI_ANY_TAG, MPI_COMM_WORLD, &probe_flag, &incoming_status); 
+        if (!probe_flag) continue; //no messages to recieve 
+        incoming_request = new MPI_Request; 
+        incoming_source = incoming_status.MPI_SOURCE; 
+        incoming_tag = incoming_status.MPI_TAG; 
+        MPI_Get_count(&incoming_status, MPI_CHAR, &incoming_size);
+        MPI_Irecv(incoming_buffer, incoming_size, MPI_CHAR, master_robin, incoming_tag,  
+            MPI_COMM_WORLD, incoming_request);
+        if (PRINT_EXCHANGE_NUMS) printf("Master Batman Waiting: Flag = %d \n", incoming_tag); 
+        MPI_Wait(incoming_request, &incoming_status);
+        if (PRINT_EXCHANGE_NUMS) printf("Master Batman: Flag = %d \n", incoming_tag); 
         //unflatten and add to map 
         unflatten_current_index = 0;
-
         unflatten_map(incoming_buffer, unflatten_current_index, working_map, incoming_size);
-        if (PRINT_EXCHANGE_NUMS) printf("Master Robin: Source =  %d Flag = %d \n", incoming_source, incoming_tag); 
-        
         //PRINT MAP
+        period_counter++; 
         if (PRINT_MASTER_MAP && !(period_counter++%PRINT_MASTER_MAP_PERIOD))
         {
             printf("\n"); 
@@ -328,10 +404,7 @@ void do_master_sidekick()
             }
             printf("\n"); 
         }
-        
-
     }
-
 
 }
 
@@ -410,7 +483,7 @@ int main(int argc, char **argv)
 
     if (my_rank == 0)
     {
-        //not yet built 
+        do_master();
     }
     else if (my_rank == robin[0])
     {
