@@ -1,6 +1,4 @@
 
-
-
 /*
 
 Set up: 
@@ -30,6 +28,9 @@ OoO
 
 */
 
+/*
+CUrre
+*/
 
 
 #include "mpi.h"
@@ -49,8 +50,8 @@ int file_len;
 int my_rank; 
 int world_size;
 
-#define INTRANODE_BLOCK_SIZE 50
-#define INTERNODE_BLOCK_SIZE 100
+#define INTRANODE_BLOCK_SIZE 50000
+#define INTERNODE_BLOCK_SIZE 100000
 #define INTERNODE_OUTBOX_SIZE 50 
 #define INTRANODE_OUTBOX_SIZE 50 
 #define MAP_SWEEP_LENGTH 1000
@@ -61,6 +62,7 @@ int world_size;
 #define PRINT_EXCHANGE_NUMS 0
 #define PRINT_BATMEN_REDUCER_MAPS 0
 #define PRINT_MASTER_MAP 1
+#define PRINT_MASTER_MAP_PERIOD 1000
 
 //we could combine these for efficiency 
 const int INTRA_BUFF_SIZE = INTRANODE_BLOCK_SIZE*(MAX_WORD_SIZE + MAX_NUM_SIZE); 
@@ -87,7 +89,7 @@ int current_file_index;
 void get_word(map<string, int>& output_map, ifstream& fl, int& current_index, int start_index,  int stop_index);
 void read_in_block_intra(ifstream& fl, int start_index, int stop_index);
 void read_in_block_inter(ifstream& fl, int start_index, int stop_index, int can_combine);
-void flatten_map(char* output, int& current_index, map<string, int> input_map, int stop_index);
+void flatten_map(char* output, int& current_index, map<string, int>& input_map, int stop_index);
 static void prep_word(string& cword);
 static void number_as_chars(int num, char *dest, int& output_len); 
 void unflatten_map(char* input_chars, int& _current_index, map<string, int>& input_map, int stop_index);
@@ -124,16 +126,11 @@ void do_reduce_sidekick(reduceArgs* input_args)
 
 
     int dum_count = 0; 
-    //while (current_index < input_args->stop_read_loc)
     while (current_file_index < input_args->stop_read_loc)
     {
         dum_count++; 
-        //read in block from file 
-        //if (outboxSize != INTRANODE_OUTBOX_SIZE) read_in_block(workingFD, current_index, 0);  
+        //read in chunk of words from file 
         if (outboxSize != INTRANODE_OUTBOX_SIZE) read_in_block_intra(*input_args->input_file, input_args->start_read_loc, input_args->stop_read_loc);
-
-        //read block adds data to map 
-        
         //check to see if messages have been recieved 
         while (outboxSize > 0)
         {
@@ -147,7 +144,7 @@ void do_reduce_sidekick(reduceArgs* input_args)
             }
             else break; 
         }
-        //send block
+        //send chunk of words
         if ((outboxSize != INTRANODE_OUTBOX_SIZE) && (intraNodeBufferSize != 0))
         {
             intraNodeOutboxLengths[outboxHead] = intraNodeBufferSize; //Add to current buffer head of outbox 
@@ -172,12 +169,9 @@ void do_reduce_sidekick(reduceArgs* input_args)
     //cant leave without waiting for all sends to finish 
     while (outboxSize > 0)
     {
-        //MPI_TEST on intraNodeOutputStatuses[outboxTail]
         MPI_Wait(intraNodeOutboxRequests[outboxTail], &send_status); 
-        
         outboxTail = ((outboxTail + 1)%INTRANODE_OUTBOX_SIZE); 
         outboxSize--;
-
     }
 
 }
@@ -301,6 +295,7 @@ void do_master_sidekick()
     char incoming_buffer[INTER_BUFF_SIZE]; 
     int unflatten_current_index = 0; 
     int probe_flag;
+    int period_counter; 
     while (accumulate(done_yet.begin(), done_yet.end(), 0) != ((world_size-2)/2))
     {
         //Get Incoming message info 
@@ -322,7 +317,7 @@ void do_master_sidekick()
         if (PRINT_EXCHANGE_NUMS) printf("Master Robin: Source =  %d Flag = %d \n", incoming_source, incoming_tag); 
         
         //PRINT MAP
-        if (PRINT_MASTER_MAP)
+        if (PRINT_MASTER_MAP && !(period_counter++%PRINT_MASTER_MAP_PERIOD))
         {
             printf("\n"); 
             for (auto entry : working_map)
@@ -508,20 +503,21 @@ static void number_as_chars(int num, char *dest, int& output_len)
 
 static void prep_word(string& cword)
 {
-    cword.erase (std::remove_if (cword.begin (), cword.end (), ::ispunct), cword.end ());
+    for (auto letter = cword.cbegin(); letter != cword.cend();)
+    {
+        if (::ispunct(*letter)) letter = cword.erase(letter); 
+        else ++letter; 
+    }
     transform(cword.begin(), cword.end(), cword.begin(), ::tolower); 
-    //cword.erase(std::remove_if (cword.begin(), cword.end(), ::isspace), cword.end()); 
 }
 
 void get_word(map<string, int>& output_map, ifstream& fl, int& _current_index, int start_index,  int stop_index)
 {
 
     //Takes words in range of file index and puts into map 
-
-    //ifstream fl = *fl_in; 
     string first_output_word = ""; 
     
-    if (my_rank!=0) //soon this will be !=2 !!
+    if (my_rank!=2)  //lowest numbered reducer = 2
     {
         if (start_index == _current_index)
         {
@@ -561,11 +557,11 @@ void get_word(map<string, int>& output_map, ifstream& fl, int& _current_index, i
     return; 
 }
 
-void flatten_map(char* output, int& _current_index, map<string, int> input_map, int stop_index)
+void flatten_map(char* output, int& _current_index, map<string, int>& input_map, int stop_index)
 {
     char num_buffer[MAX_NUM_SIZE];
     int num_len; 
-    for (map<string, int>::iterator it = input_map.begin(); it != input_map.end();)
+    for (auto it = input_map.begin(); it != input_map.end();)
     {
 
         if (!it->first.size()) input_map.erase(it++); 
@@ -581,10 +577,6 @@ void flatten_map(char* output, int& _current_index, map<string, int> input_map, 
         {
             output[_current_index] = num_buffer[i]; 
             _current_index++; 
-        }
-        if ((num_len <= 1) || (it->first.size() == 0) || (it->second == 0))
-        {
-            printf("\n FLATTEN: invalid number added strin = %s number = %d rank = %d \n", it->first.c_str(), it->second, my_rank);
         }
         input_map.erase(it++);
         
@@ -604,28 +596,15 @@ void unflatten_map(char* input_chars, int& _current_index, map<string, int>& inp
         //word 
         string adding_word = input_chars+_current_index;
         while(input_chars[_current_index++] != '\0') {}
-        if (_current_index >= stop_index) //this should never happen 
-        {
-            printf("\n UNFLATTEN: VIOLATED STRING | NUMBER CONVENTION, String = %s has no cooresonding frequency rank = %d\n", adding_word.c_str(), my_rank); 
-            break; 
-        }
         //number
         debug_neighbors[0] = input_chars[_current_index -1]; 
         adding_number = atoi(input_chars+_current_index); 
         debug_neighbors[1] = input_chars[_current_index +1]; 
         while(input_chars[_current_index++] != '\0') {}
-        //debug 
-        if (adding_number <= 0)
-        {
-            printf("\n UNFLATTEN: FOUND INVALID NUMBER = %d, cooresponding word is %s, neighbors are [%c, %c] rank = %d\n", 
-            adding_number, adding_word.c_str(), debug_neighbors[0], debug_neighbors[1], my_rank);
-        }
         if (input_map.count(adding_word)) input_map[adding_word]+=adding_number; 
         else input_map.insert(std::pair<string, int>(adding_word, adding_number)); 
 
     }
     return; 
 }
-
-
 
