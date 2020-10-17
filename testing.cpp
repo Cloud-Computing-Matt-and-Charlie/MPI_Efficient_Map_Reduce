@@ -50,8 +50,8 @@ int file_len;
 int my_rank; 
 int world_size;
 
-#define INTRANODE_BLOCK_SIZE 50000
-#define INTERNODE_BLOCK_SIZE 100000
+#define INTRANODE_BLOCK_SIZE (500)
+#define INTERNODE_BLOCK_SIZE (1000)
 #define INTERNODE_OUTBOX_SIZE 50 
 #define INTRANODE_OUTBOX_SIZE 50 
 #define MAP_SWEEP_LENGTH 1000
@@ -62,7 +62,8 @@ int world_size;
 #define PRINT_EXCHANGE_NUMS 0
 #define PRINT_BATMEN_REDUCER_MAPS 0
 #define PRINT_MASTER_MAP 1
-#define PRINT_MASTER_MAP_PERIOD 1000
+#define PRINT_MASTER_MAP_PERIOD 10
+#define MODE_WORD_CHAR 1
 
 //we could combine these for efficiency 
 const int INTRA_BUFF_SIZE = INTRANODE_BLOCK_SIZE*(MAX_WORD_SIZE + MAX_NUM_SIZE); 
@@ -86,7 +87,7 @@ int interNodeBufferSize;
 int current_file_index; 
 
 
-void get_word(map<string, int>& output_map, ifstream& fl, int& current_index, int start_index,  int stop_index);
+void get_words(map<string, int>& output_map, ifstream& fl, int& current_index, int start_index,  int stop_index);
 void read_in_block_intra(ifstream& fl, int start_index, int stop_index);
 void read_in_block_inter(ifstream& fl, int start_index, int stop_index, int can_combine);
 void flatten_map(char* output, int& current_index, map<string, int>& input_map, int stop_index);
@@ -94,6 +95,7 @@ static void prep_word(string& cword);
 static void number_as_chars(int num, char *dest, int& output_len); 
 void unflatten_map(char* input_chars, int& _current_index, map<string, int>& input_map, int stop_index);
 void read_in_block_inter_temp(ifstream& fl, int start_index, int stop_index);
+void get_chars(map<string, int>& output_map, ifstream& fl, int& _current_index, int start_index,  int stop_index);
 
 
 
@@ -453,8 +455,8 @@ int main(int argc, char **argv)
 //********************************************************************
 void read_in_block_intra(ifstream& fl, int start_index, int stop_index)
 {
-
-    get_word(working_map, fl, current_file_index, start_index, min(current_file_index + MAP_SWEEP_LENGTH, stop_index)); 
+    if (MODE_WORD_CHAR) get_chars(working_map, fl, current_file_index, start_index, min(current_file_index + MAP_SWEEP_LENGTH, stop_index)); 
+    else get_words(working_map, fl, current_file_index, start_index, min(current_file_index + MAP_SWEEP_LENGTH, stop_index)); 
     flatten_map(intraNodeBuffer, intraNodeBufferSize, working_map, INTRA_BUFF_SIZE); 
     return; 
 }
@@ -463,7 +465,8 @@ void read_in_block_inter_temp(ifstream& fl, int start_index, int stop_index)
     int unflatten_current_index = 0; 
     //unflatten interbufffer (recieved from robin)
     unflatten_map(intraNodeBuffer, unflatten_current_index, working_map, intraNodeBufferSize); 
-    get_word(working_map, fl, current_file_index, start_index, min(current_file_index + MAP_SWEEP_LENGTH, stop_index)); 
+    if (MODE_WORD_CHAR) get_chars(working_map, fl, current_file_index, start_index, min(current_file_index + MAP_SWEEP_LENGTH, stop_index));
+    else get_words(working_map, fl, current_file_index, start_index, min(current_file_index + MAP_SWEEP_LENGTH, stop_index)); 
     flatten_map(interNodeBuffer, interNodeBufferSize, working_map, INTER_BUFF_SIZE); 
     return; 
 }
@@ -476,7 +479,7 @@ void read_in_block_inter(ifstream& fl, int start_index, int stop_index, int can_
     while (interNodeBufferSize < ((INTER_BUFF_SIZE - MAX_WORD_SIZE) - MAX_NUM_SIZE))
     {
 
-        get_word(working_map, fl, current_file_index, start_index, min(current_file_index + MAP_SWEEP_LENGTH, stop_index)); 
+        get_words(working_map, fl, current_file_index, start_index, min(current_file_index + MAP_SWEEP_LENGTH, stop_index)); 
         flatten_map(interNodeBuffer, interNodeBufferSize, working_map, INTER_BUFF_SIZE); 
     }
     return; 
@@ -511,7 +514,7 @@ static void prep_word(string& cword)
     transform(cword.begin(), cword.end(), cword.begin(), ::tolower); 
 }
 
-void get_word(map<string, int>& output_map, ifstream& fl, int& _current_index, int start_index,  int stop_index)
+void get_words(map<string, int>& output_map, ifstream& fl, int& _current_index, int start_index,  int stop_index)
 {
 
     //Takes words in range of file index and puts into map 
@@ -557,14 +560,33 @@ void get_word(map<string, int>& output_map, ifstream& fl, int& _current_index, i
     return; 
 }
 
+void get_chars(map<string, int>& output_map, ifstream& fl, int& _current_index, int start_index,  int stop_index)
+{
+    char temp; 
+    string temp_string = "";  
+    while(_current_index<stop_index)
+    {
+        
+        fl.get(temp); 
+        temp_string += temp; 
+        if (output_map.count(temp_string)) output_map[temp_string]++; 
+        else output_map.insert(std::pair<string, int>(temp_string, 1)); 
+        temp_string.pop_back(); 
+        _current_index++; 
+    }
+}
+
 void flatten_map(char* output, int& _current_index, map<string, int>& input_map, int stop_index)
 {
+    //NOTE: I choose here to erase in reverse alphabetical order...
+    //unless main character of book has first name zebra should be good 
     char num_buffer[MAX_NUM_SIZE];
     int num_len; 
-    for (auto it = input_map.begin(); it != input_map.end();)
+    int count = 0; 
+    for (auto it = input_map.rbegin(); it != input_map.rend(); it++)
     {
-
-        if (!it->first.size()) input_map.erase(it++); 
+        count++; 
+        if (!it->first.size()) continue; 
         //add word
         for (string::const_iterator  letter = it->first.begin(); letter!=it->first.end(); ++letter) 
             output[_current_index++] = *letter; 
@@ -578,9 +600,13 @@ void flatten_map(char* output, int& _current_index, map<string, int>& input_map,
             output[_current_index] = num_buffer[i]; 
             _current_index++; 
         }
-        input_map.erase(it++);
-        
-        if ((stop_index - _current_index) < (MAX_NUM_SIZE + MAX_WORD_SIZE)) return; 
+        if ((stop_index - _current_index) < (MAX_NUM_SIZE + MAX_WORD_SIZE)) break; 
+    }
+    for (int i = 0; i<count; i++) 
+    {
+        auto it = input_map.end(); 
+        it--; 
+        input_map.erase(it); 
     }
     return; 
 }
@@ -589,7 +615,6 @@ void unflatten_map(char* input_chars, int& _current_index, map<string, int>& inp
     char word_buffer[MAX_WORD_SIZE]; 
     char num_buffer[MAX_NUM_SIZE];
     int adding_number = 0; 
-    char debug_neighbors[2]; 
     while (_current_index < stop_index)
     {
         //all ordered word, num, word, num etc each with null terminator 
@@ -597,9 +622,7 @@ void unflatten_map(char* input_chars, int& _current_index, map<string, int>& inp
         string adding_word = input_chars+_current_index;
         while(input_chars[_current_index++] != '\0') {}
         //number
-        debug_neighbors[0] = input_chars[_current_index -1]; 
         adding_number = atoi(input_chars+_current_index); 
-        debug_neighbors[1] = input_chars[_current_index +1]; 
         while(input_chars[_current_index++] != '\0') {}
         if (input_map.count(adding_word)) input_map[adding_word]+=adding_number; 
         else input_map.insert(std::pair<string, int>(adding_word, adding_number)); 
@@ -607,4 +630,5 @@ void unflatten_map(char* input_chars, int& _current_index, map<string, int>& inp
     }
     return; 
 }
+
 
