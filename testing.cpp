@@ -1,7 +1,7 @@
 
 #include "general.h"
 
-
+//STOP INDEXES NEED TO BE LONG VARIABLES
 
 
 void do_reduce_sidekick(reduceArgs* input_args)
@@ -59,7 +59,7 @@ void do_reduce_sidekick(reduceArgs* input_args)
         }
 
     }
-    //cant leave without waiting for all sends to finish 
+
     while (outboxSize > 0)
     {
         MPI_Wait(intraNodeOutboxRequests[outboxTail], &send_status); 
@@ -115,7 +115,7 @@ void do_reduce(reduceArgs* input_args)
 
         if ((!probe_flag) && PRINT_EXCHANGE_NUMS)
         {
-            printf("%s: No message to recieve \n", debug_id_intra);
+            //printf("%s: No message to recieve \n", debug_id_intra);
         }
         //Populate inter buffer if space in outbox 
         if (outboxSize != INTERNODE_OUTBOX_SIZE) read_in_block_inter(*input_args->input_file, input_args->start_read_loc, input_args->stop_read_loc);
@@ -453,41 +453,6 @@ void read_in_block_inter(ifstream& fl, int start_index, int stop_index)
 }
 
 
-
-static void number_as_chars(int num, char *dest, int& output_len) 
-{
-    int i = 0, aux, div = 1;
-    aux = num;
-    while (aux > 9) {
-        div *= 10;
-        aux /= 10;
-    }
-    aux = num;
-    while (div >= 1) {
-        dest[i] = (aux / div) % 10 + '0';
-        i++;
-        div /= 10;
-    }
-    dest[i] = '\0';
-    output_len = i+1; 
-}
-
-bool is_valid_char(char input)
-{
-    if ((input<= 'z') && (input >= '!')) return true; 
-    return false; 
-}
-
-static void prep_word(string& cword)
-{
-    for (auto letter = cword.cbegin(); letter != cword.cend();)
-    {
-        if (::ispunct(*letter)) letter = cword.erase(letter); 
-        else ++letter; 
-    }
-    transform(cword.begin(), cword.end(), cword.begin(), ::tolower); 
-}
-
 void get_words(map<string, int>& output_map, ifstream& fl, int& _current_index, int start_index,  int stop_index)
 {
 
@@ -519,16 +484,31 @@ void get_words(map<string, int>& output_map, ifstream& fl, int& _current_index, 
             _current_index = fl.tellg(); 
         }
     }
-    
-    while(fl.tellg()<(stop_index-1)) 
+    int last; 
+    int old_last = 0; 
+    int dead_count = 0; 
+    while(fl.tellg()<=(stop_index-1)) 
     {
 
         string cword; 
         fl >> cword; 
         prep_word(cword); 
+        //if (dead_count >= 100) fl.seekg(1, ios::cur);
+        
+        last = (int)fl.tellg(); 
+        if (old_last == last && old_last) dead_count++; 
+        old_last = last; 
+        if (fl.peek() == EOF) 
+        {
+            _current_index = stop_index; 
+            return; 
+        }
+        //if (dead_count == 100) break;  
         if (!cword.size()) continue; 
+        dead_count = 0; 
         if (output_map.count(cword)) output_map[cword]++; 
         else output_map.insert(std::pair<string, int>(cword, 1)); 
+
     }
     _current_index = fl.tellg(); 
     return; 
@@ -566,15 +546,9 @@ void flatten_map(char* output, int& _current_index, map<string, int>& input_map,
         for (string::const_iterator  letter = it->first.begin(); letter!=it->first.end(); ++letter) 
             output[_current_index++] = *letter; 
         output[_current_index++] = '\0'; //null terminate at end of every word
-
         //corresponding number 
-        
         number_as_chars(it->second, num_buffer, num_len); 
-        for (int i = 0; i<num_len; i++)
-        {
-            output[_current_index] = num_buffer[i]; 
-            _current_index++; 
-        }
+        for (int i = 0; i<num_len; i++) output[_current_index++] = num_buffer[i]; //already has null terminator 
         if ((stop_index - _current_index) < (MAX_NUM_SIZE + MAX_WORD_SIZE)) break; 
     }
     for (int i = 0; i<count; i++) 
@@ -683,6 +657,39 @@ void print_map_to_file(std::map<std::string, int> in_map, char* filename)
         given_file << "\n"; 
     }
     given_file.close(); 
+}
+bool is_valid_char(char input)
+{
+    if ((input<= 'z') && (input >= '!')) return true; 
+    return false; 
+}
+
+static void prep_word(string& cword)
+{
+    for (auto letter = cword.cbegin(); letter != cword.cend();)
+    {
+        if (::ispunct(*letter)) letter = cword.erase(letter); 
+        else ++letter; 
+    }
+    transform(cword.begin(), cword.end(), cword.begin(), ::tolower); 
+}
+
+static void number_as_chars(int num, char *dest, int& output_len) 
+{
+    int i = 0, aux, div = 1;
+    aux = num;
+    while (aux > 9) {
+        div *= 10;
+        aux /= 10;
+    }
+    aux = num;
+    while (div >= 1) {
+        dest[i] = (aux / div) % 10 + '0';
+        i++;
+        div /= 10;
+    }
+    dest[i] = '\0';
+    output_len = i+1; 
 }
 /*
 void print_map_to_file(std::map<std::string, int> map, char * filename)
