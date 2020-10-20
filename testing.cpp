@@ -126,8 +126,10 @@ void do_reduce(reduceArgs* input_args)
         //Populate inter buffer if space in outbox 
         if (outboxSize != INTERNODE_OUTBOX_SIZE) read_in_block_inter(*input_args->input_file, input_args->start_read_loc, input_args->stop_read_loc);
         if ((!((file_read_occurences++)%PRINT_FILE_READ_PROGRESS_PERIOD)) && PRINT_FILE_READ_PROGRESS)
-            printf("%s: is currently at read location %d in [%d, %d) terminate flag = %d\n", debug_id_inter, current_file_index, input_args->start_read_loc, input_args->stop_read_loc, 
-                robin_terminate_flag);
+        {
+            printf("%s: is currently at read location %d in [%d, %d) terminate flag = %d intersize = %d intrasize = %d outbox = %d\n", debug_id_inter, current_file_index, input_args->start_read_loc, input_args->stop_read_loc, 
+                robin_terminate_flag, interNodeBufferSize, intraNodeBufferSize, outboxSize);
+        }
         //Remove recieved items from Inter-Outbox 
         while (outboxSize > 0) 
         {
@@ -161,6 +163,7 @@ void do_reduce(reduceArgs* input_args)
             if (is_last) printf("Exiting sender %s \n", debug_id_inter); 
             if (is_last) break; 
         }
+        
         
 
         //PRINT MAP 
@@ -413,8 +416,9 @@ int main(int argc, char **argv)
     for (int i = 2; i<world_size; i++) ram_sum+=rams[i]; 
     int* portions = new int[world_size-2]; 
     
-    double portion = ram_sum / ((world_size-2)*4); 
+    double portion = ram_sum / ((world_size-2)*16); 
     for (int i = 0; i<(world_size-2); i++) portions[i] = rams[i+2]/portion; 
+    portions[3] = 1; 
     int my_portions = portions[my_rank -2]; 
 
 
@@ -449,7 +453,7 @@ int main(int argc, char **argv)
         fl.seekg(0, ios::beg);
     
         int my_block_size = file_len; 
-        my_block_size /= ((world_size-2)*4);
+        my_block_size /= ((world_size-2)*16);
         int single_portion = (file_len/((world_size-2)*4));
         my_block_size *= my_portions; 
         
@@ -457,10 +461,11 @@ int main(int argc, char **argv)
         int my_start_index = 0; 
         for (int i = 0; i<(my_rank-2); i++) my_start_index+= portions[i]*single_portion; 
         int my_stop_index = my_start_index+my_block_size; 
+        if (my_rank == (world_size-1)) my_stop_index = file_len; 
         input_args->start_read_loc = my_start_index; 
         input_args->stop_read_loc = my_stop_index; 
         input_args->input_file = &fl; 
-        if (my_rank == (world_size-1)) my_stop_index = file_len; 
+        
         if (std::find(batmen.begin(), batmen.end(), my_rank) != batmen.end())
         {
             printf("I am a batman with rank # %d and processor name %s\n", my_rank, processor_name); 
@@ -545,11 +550,13 @@ void get_words(map<string, int>& output_map, ifstream& fl, int& _current_index, 
         //if (dead_count >= 100) fl.seekg(1, ios::cur);
         
         last = (int)fl.tellg(); 
-        if (old_last == last && old_last) dead_count++; 
+        //if (old_last == last && old_last) dead_count++; 
+        if (old_last == last && old_last) fl.seekg(1, ios::cur); 
         old_last = last; 
         if (fl.peek() == EOF) 
         {
             _current_index = stop_index; 
+            printf("\n\n\n TERMINATING EARLY \n\n"); 
             return; 
         }
         //if (dead_count == 100) break;  
