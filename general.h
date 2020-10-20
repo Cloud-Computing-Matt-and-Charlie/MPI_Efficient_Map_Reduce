@@ -39,6 +39,7 @@ Isend
 #include <set>
 #include <errno.h>
 #include<cstring>
+#include <sys/sysinfo.h> 
 using namespace std;
 
  
@@ -52,27 +53,29 @@ int world_size;
 #define INTERNODE_BLOCK_SIZE (100000)
 #define INTERNODE_OUTBOX_SIZE 5
 #define INTRANODE_OUTBOX_SIZE 5
-#define MAP_SWEEP_LENGTH 100000 //Make sure this is at least the intranode block size
+#define MAP_SWEEP_LENGTH 1000000 //Make sure this is at least the intranode block size
 #define POLL_FREQUENCY 5 
 #define MAX_NUM_SIZE 10
 #define MAX_WORD_SIZE 50 
-#define INPUT_FILE_PATH "2600.txt" //"./204178.txt" 
-#define OUTPUT_FILE_PATH "2600.out" //"./204178.out"
+#define INPUT_FILE_PATH "gutenberg-1G.txt" //"./204178.txt" 
+#define OUTPUT_FILE_PATH "gutenberg-1G.out" //"./204178.out"
 #define PRINT_EXCHANGE_NUMS 1
 #define PRINT_BATMEN_REDUCER_MAPS 0
 #define PRINT_MASTER_MAP 0
 #define PRINT_MASTER_MAP_PERIOD 1
 #define MODE_WORD_CHAR 0
-#define HEAP_SIZE 10
+#define HEAP_SIZE 100
 #define PRINT_HEAP 0
 #define PRINT_HEAP_PERIOD 10
+#define PRINT_FILE_READ_PROGRESS 1
+#define PRINT_FILE_READ_PROGRESS_PERIOD 1000
 
 // Sending data management 
 const int INTRA_BUFF_SIZE = INTRANODE_BLOCK_SIZE*(MAX_WORD_SIZE + MAX_NUM_SIZE); 
 const int INTER_BUFF_SIZE = INTERNODE_BLOCK_SIZE*(MAX_WORD_SIZE + MAX_NUM_SIZE); 
 char intraNodeOutbox[INTRANODE_OUTBOX_SIZE][INTRA_BUFF_SIZE];
 int intraNodeOutBoxLengths[INTRANODE_OUTBOX_SIZE];
-char interNodeOutbox[INTERNODE_OUTBOX_SIZE][INTRA_BUFF_SIZE];
+char interNodeOutbox[INTERNODE_OUTBOX_SIZE][INTER_BUFF_SIZE];
 int intraNodeOutboxLengths[INTRANODE_OUTBOX_SIZE];
 int interNodeOutboxLengths[INTERNODE_OUTBOX_SIZE];
 int master_batman; 
@@ -80,7 +83,7 @@ int master_robin;
 MPI_Request* intraNodeOutboxRequests[INTRANODE_OUTBOX_SIZE]; 
 MPI_Request* interNodeOutboxRequests[INTERNODE_OUTBOX_SIZE]; 
 char intraNodeBuffer[INTRA_BUFF_SIZE];
-char interNodeBuffer[INTRA_BUFF_SIZE];
+char interNodeBuffer[INTER_BUFF_SIZE];
 int intraNodeBufferSize;
 int interNodeBufferSize; 
 int current_file_index; 
