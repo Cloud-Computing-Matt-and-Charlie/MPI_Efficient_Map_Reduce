@@ -37,6 +37,8 @@ Isend
 #include <cctype>
 #include <queue> 
 #include <set>
+#include <errno.h>
+#include<cstring>
 using namespace std;
 
  
@@ -46,16 +48,16 @@ int file_len;
 int my_rank; 
 int world_size;
 
-#define INTRANODE_BLOCK_SIZE (5000)
-#define INTERNODE_BLOCK_SIZE (10000)
-#define INTERNODE_OUTBOX_SIZE 50 
-#define INTRANODE_OUTBOX_SIZE 50 
-#define MAP_SWEEP_LENGTH 1000
+#define INTRANODE_BLOCK_SIZE (50000)
+#define INTERNODE_BLOCK_SIZE (100000)
+#define INTERNODE_OUTBOX_SIZE 5
+#define INTRANODE_OUTBOX_SIZE 5
+#define MAP_SWEEP_LENGTH 100000 //Make sure this is at least the intranode block size
 #define POLL_FREQUENCY 5 
 #define MAX_NUM_SIZE 10
 #define MAX_WORD_SIZE 50 
-#define INPUT_FILE_PATH "2600.txt"
-#define OUTPUT_FILE_PATH "2600.out"
+#define INPUT_FILE_PATH "./204178.txt" 
+#define OUTPUT_FILE_PATH "./204178.out"
 #define PRINT_EXCHANGE_NUMS 1
 #define PRINT_BATMEN_REDUCER_MAPS 0
 #define PRINT_MASTER_MAP 0
