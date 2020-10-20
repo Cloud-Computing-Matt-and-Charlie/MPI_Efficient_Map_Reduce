@@ -116,7 +116,7 @@ void do_reduce(reduceArgs* input_args)
 
             if ((!probe_flag) && PRINT_EXCHANGE_NUMS)
             {
-                printf("%s: No message to recieve \n", debug_id_intra);
+                //printf("%s: No message to recieve \n", debug_id_intra);
             }
         }
         //Populate inter buffer if space in outbox 
@@ -245,6 +245,8 @@ void do_master_sidekick()
             interNodeOutboxRequests[outboxHead] = new MPI_Request; 
             MPI_Isend(interNodeOutbox[outboxHead], interNodeOutboxLengths[outboxHead], MPI_CHAR, 
                 master_batman, is_last, MPI_COMM_WORLD, interNodeOutboxRequests[outboxHead]);
+            if (PRINT_EXCHANGE_NUMS) printf("Master Robin: Sent to Master, Outbox Size = %d  \n", outboxSize); 
+
             //incrament pointers 
             outboxSize++; 
             outboxHead = ((outboxHead+1)%INTERNODE_OUTBOX_SIZE); 
@@ -273,7 +275,7 @@ void do_master()
     int incoming_size; 
     MPI_Status incoming_status; 
     MPI_Request* incoming_request; 
-    char incoming_buffer[INTER_BUFF_SIZE*2]; 
+    char incoming_buffer[INTER_BUFF_SIZE]; 
     int unflatten_current_index = 0; 
     int probe_flag;
     int period_counter = 0; 
@@ -283,6 +285,7 @@ void do_master()
     {
         MPI_Iprobe(master_robin, MPI_ANY_TAG, MPI_COMM_WORLD, &probe_flag, &incoming_status); 
         if (!probe_flag) continue; //no messages to recieve 
+        else printf("DELETE Master Batman Waiting: Flag = %d \n", incoming_tag); 
         incoming_request = new MPI_Request; 
         incoming_source = incoming_status.MPI_SOURCE; 
         incoming_tag = incoming_status.MPI_TAG; 
@@ -316,6 +319,7 @@ void do_master()
             printf("\n\n"); 
         }
     }
+    printf("Writing %d words to file: %s ", working_map.size(), INPUT_FILE_PATH); 
     get_most_least_frequent();
     print_map_to_file(working_map, OUTPUT_FILE_PATH); 
 
@@ -396,6 +400,7 @@ int main(int argc, char **argv)
 
     if (my_rank == 0)
     {
+        printf("I am master batman with rank # %d and processor name %s \n", my_rank, processor_name); 
         do_master();
     }
     else if (my_rank == robin[0])
@@ -419,7 +424,7 @@ int main(int argc, char **argv)
         fl.seekg(0, ios::end); 
         size_t len = fl.tellg();
         file_len = (int)len;
-        if (my_rank == 2) printf("File length is %ld \n", file_len); 
+        if (my_rank == 2) printf("File length is %d \n", file_len); 
         fl.seekg(0, ios::beg);
         int my_block_size = file_len/num_recievers; 
         int my_start_index = my_block_size*(my_rank-2); //(my_block_size*(my_rank-2)) !!!
