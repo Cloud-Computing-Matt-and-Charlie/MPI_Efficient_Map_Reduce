@@ -1,7 +1,6 @@
 
 #include "general.h"
 
-//STOP INDEXES NEED TO BE LONG VARIABLES
 
 
 void do_reduce_sidekick(reduceArgs* input_args)
@@ -55,7 +54,7 @@ void do_reduce_sidekick(reduceArgs* input_args)
             //incrament pointers 
             outboxSize++; 
             outboxHead = ((outboxHead+1)%INTRANODE_OUTBOX_SIZE); 
-            if (PRINT_EXCHANGE_NUMS) if (is_last) printf("exiting sender %d -> %d \n", my_rank, input_args->my_partner); 
+            if (is_last) printf("exiting sender %d -> %d \n", my_rank, input_args->my_partner); 
         }
 
     }
@@ -90,32 +89,35 @@ void do_reduce(reduceArgs* input_args)
     int send_complete_flag; 
     int is_last = 0; 
     //TODO: INDBOX (INTRA NODE OUTBOX)
-    while(current_file_index<input_args->stop_read_loc || (!robin_terminate_flag) || working_map.size())
+    while(current_file_index<=(input_args->stop_read_loc-1) || (!robin_terminate_flag) || working_map.size())
     {
-        //PROBE for recieved message from Robin, if a message is coming: How big? What Tag? 
-        MPI_Iprobe(input_args->my_partner, MPI_ANY_TAG, MPI_COMM_WORLD, &probe_flag, &incoming_status); 
-        if (probe_flag)
+        if (!robin_terminate_flag)
         {
-            incoming_request = new MPI_Request; 
-            robin_terminate_flag = incoming_status.MPI_TAG;
-            MPI_Get_count(&incoming_status, MPI_CHAR, &intraNodeBufferSize);
-            //Non blocking recieve 
-            MPI_Irecv(intraNodeBuffer, intraNodeBufferSize, MPI_CHAR, input_args->my_partner, robin_terminate_flag,  
-                MPI_COMM_WORLD, incoming_request);
-            //Print what were waiting ot recieve 
-            if (PRINT_EXCHANGE_NUMS) printf("%s : Waiting on Count = %d Flag = %d \n", debug_id_intra, total_recieved+1, robin_terminate_flag); 
-            MPI_Wait(incoming_request, &incoming_status); 
+            //PROBE for recieved message from Robin, if a message is coming: How big? What Tag? 
+            MPI_Iprobe(input_args->my_partner, MPI_ANY_TAG, MPI_COMM_WORLD, &probe_flag, &incoming_status); 
+            if (probe_flag)
+            {
+                incoming_request = new MPI_Request; 
+                robin_terminate_flag = incoming_status.MPI_TAG;
+                MPI_Get_count(&incoming_status, MPI_CHAR, &intraNodeBufferSize);
+                //Non blocking recieve 
+                MPI_Irecv(intraNodeBuffer, intraNodeBufferSize, MPI_CHAR, input_args->my_partner, robin_terminate_flag,  
+                    MPI_COMM_WORLD, incoming_request);
+                //Print what were waiting to recieve 
+                if (PRINT_EXCHANGE_NUMS) printf("%s : Waiting on Count = %d Flag = %d \n", debug_id_intra, total_recieved+1, robin_terminate_flag); 
+                MPI_Wait(incoming_request, &incoming_status); 
 
-            //Printing
-            total_recieved++; 
-            if (PRINT_EXCHANGE_NUMS) printf("%s : Count = %d Flag = %d \n", debug_id_intra, total_recieved, robin_terminate_flag); 
-            if (robin_terminate_flag) printf("Recieved last packet from %d!! \n\n", input_args->my_partner);
-        }
-        else intraNodeBufferSize = 0;  //nothing to recieve 
+                //Printing
+                total_recieved++; 
+                if (PRINT_EXCHANGE_NUMS) printf("%s : Count = %d Flag = %d \n", debug_id_intra, total_recieved, robin_terminate_flag); 
+                if (robin_terminate_flag) printf("Recieved last packet from %d!! \n\n", input_args->my_partner);
+            }
+            else intraNodeBufferSize = 0;  //nothing to recieve 
 
-        if ((!probe_flag) && PRINT_EXCHANGE_NUMS)
-        {
-            //printf("%s: No message to recieve \n", debug_id_intra);
+            if ((!probe_flag) && PRINT_EXCHANGE_NUMS)
+            {
+                printf("%s: No message to recieve \n", debug_id_intra);
+            }
         }
         //Populate inter buffer if space in outbox 
         if (outboxSize != INTERNODE_OUTBOX_SIZE) read_in_block_inter(*input_args->input_file, input_args->start_read_loc, input_args->stop_read_loc);
@@ -124,6 +126,7 @@ void do_reduce(reduceArgs* input_args)
         {
             MPI_Test(interNodeOutboxRequests[outboxTail], &send_complete_flag, 
                 &send_status);
+
             if (send_complete_flag)
             {
                 outboxTail = ((outboxTail + 1)%INTERNODE_OUTBOX_SIZE); 
@@ -139,7 +142,7 @@ void do_reduce(reduceArgs* input_args)
             //Copy Inter buffer to Inter Outbox head
             for (int i = 0; i<interNodeOutboxLengths[outboxHead]; i++) interNodeOutbox[outboxHead][i] = interNodeBuffer[i]; 
             //If it is the last message we set the tag = 1 so reciever @ master processer knows were done 
-            is_last = ((current_file_index >= input_args->stop_read_loc) && robin_terminate_flag && (!working_map.size())) ? 1 : 0; 
+            is_last = ((current_file_index >= (input_args->stop_read_loc-1)) && robin_terminate_flag && (!working_map.size())) ? 1 : 0; 
             //Non-blocking send of head
             interNodeOutboxRequests[outboxHead] = new MPI_Request; 
             MPI_Isend(interNodeOutbox[outboxHead], interNodeOutboxLengths[outboxHead], MPI_CHAR, 
@@ -148,6 +151,7 @@ void do_reduce(reduceArgs* input_args)
             outboxSize++; 
             outboxHead = ((outboxHead+1)%INTERNODE_OUTBOX_SIZE); 
             if (PRINT_EXCHANGE_NUMS) printf("%s : Count = %d Flag = %d \n", debug_id_inter, total_recieved, is_last); 
+            if (is_last) printf("Exiting sender %s \n", debug_id_inter); 
             if (is_last) break; 
         }
         
@@ -185,7 +189,7 @@ void do_master_sidekick()
 {
     vector<int> done_yet((world_size-2)/2, 0); 
     int incoming_source; 
-    int incoming_tag; 
+    int incoming_tag  = 0;
    //int incoming_size; 
     MPI_Status incoming_status; 
     MPI_Request* incoming_request; 
@@ -222,7 +226,7 @@ void do_master_sidekick()
         incoming_source = incoming_status.MPI_SOURCE; 
         incoming_tag = incoming_status.MPI_TAG; 
         MPI_Get_count(&incoming_status, MPI_CHAR, &interNodeBufferSize);
-        done_yet[incoming_source] = incoming_tag; 
+        done_yet[std::distance(batmen.begin(), std::find(batmen.begin(), batmen.end(), incoming_source)) - 1] = incoming_tag; 
         //Recvieve incoming message 
         MPI_Irecv(interNodeBuffer, interNodeBufferSize, MPI_CHAR, incoming_source, incoming_tag,  
             MPI_COMM_WORLD, incoming_request);
@@ -265,7 +269,7 @@ void do_master_sidekick()
 void do_master()
 {
     int incoming_source; 
-    int incoming_tag; 
+    int incoming_tag = 0; 
     int incoming_size; 
     MPI_Status incoming_status; 
     MPI_Request* incoming_request; 
@@ -312,6 +316,7 @@ void do_master()
             printf("\n\n"); 
         }
     }
+    get_most_least_frequent();
     print_map_to_file(working_map, OUTPUT_FILE_PATH); 
 
 }
@@ -403,9 +408,18 @@ int main(int argc, char **argv)
 
         
         ifstream fl(INPUT_FILE_PATH, ios::in); 
+        if (!fl.is_open())
+        {
+            printf("Error in rank = %d \n Opeing file %s with errno = %s \n", my_rank, INPUT_FILE_PATH, strerror(errno)); 
+            printf("\n"); 
+            return 0; 
+
+        }
+        
         fl.seekg(0, ios::end); 
         size_t len = fl.tellg();
         file_len = (int)len;
+        if (my_rank == 2) printf("File length is %ld \n", file_len); 
         fl.seekg(0, ios::beg);
         int my_block_size = file_len/num_recievers; 
         int my_start_index = my_block_size*(my_rank-2); //(my_block_size*(my_rank-2)) !!!
@@ -444,8 +458,8 @@ void read_in_block_intra(ifstream& fl, int start_index, int stop_index)
 void read_in_block_inter(ifstream& fl, int start_index, int stop_index)
 {
     int unflatten_current_index = 0; 
-    //unflatten interbufffer (recieved from robin)
     unflatten_map(intraNodeBuffer, unflatten_current_index, working_map, intraNodeBufferSize); 
+    intraNodeBufferSize = 0;
     if (MODE_WORD_CHAR) get_chars(working_map, fl, current_file_index, start_index, min(current_file_index + MAP_SWEEP_LENGTH, stop_index));
     else get_words(working_map, fl, current_file_index, start_index, min(current_file_index + MAP_SWEEP_LENGTH, stop_index)); 
     flatten_map(interNodeBuffer, interNodeBufferSize, working_map, INTER_BUFF_SIZE); 
@@ -647,6 +661,40 @@ void print_map_to_file(std::map<std::string, int> in_map, char* filename)
 {
     std::ofstream given_file; 
     given_file.open(filename); 
+
+
+    given_file <<"______________________10 Most Frequent Frequencies_______________________\n"; 
+    given_file<<"The Largest Word Occurences are \n"; 
+    for (auto entry = largest_frequencies.rbegin(); entry != largest_frequencies.rend(); ++entry)
+    {
+        given_file<<"Words which occur "; 
+        given_file<<*entry; 
+        given_file<<" times: ["; 
+        while ((min_heap.top().second <= *entry) && min_heap.size()) 
+        {
+            given_file<<min_heap.top().second;  
+            min_heap.pop(); 
+            if (min_heap.size()) given_file<<", ";
+        }
+        given_file<<" ] \n"; 
+    }
+    
+    given_file <<"______________________10 Least Frequent Frequencies_______________________\n"; 
+    given_file<<"The Smallest Word Occurences are \n"; 
+    for (auto entry = smallest_frequencies.rbegin(); entry != smallest_frequencies.rend(); ++entry)
+    {
+        given_file<<"Words which occur "; 
+        given_file<<*entry; 
+        given_file<<" times: ["; 
+        while ((max_heap.top().second >= *entry) && max_heap.size()) 
+        {
+            given_file<<max_heap.top().second;  
+            max_heap.pop(); 
+            if (max_heap.size()) given_file<<", ";
+        }
+        given_file<<" ] \n"; 
+    }
+    
     given_file <<"______________________WORD FREQUENCY LIST_______________________\n"; 
     given_file << "(word : freq)\n"; 
     for (auto entry : in_map)
@@ -657,6 +705,7 @@ void print_map_to_file(std::map<std::string, int> in_map, char* filename)
         given_file << "\n"; 
     }
     given_file.close(); 
+
 }
 bool is_valid_char(char input)
 {
