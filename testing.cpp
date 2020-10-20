@@ -15,8 +15,8 @@ void do_reduce_sidekick(reduceArgs* input_args)
     int poll_count = 0; 
     int is_last = 0; 
     int send_complete_flag = 0; 
+    int file_read_occurences = 0; 
     MPI_Status send_status; 
-
 
     int dum_count = 0; 
     while ((current_file_index < input_args->stop_read_loc) || working_map.size())
@@ -24,6 +24,8 @@ void do_reduce_sidekick(reduceArgs* input_args)
         dum_count++; 
         //read in chunk of words from file 
         if (outboxSize != INTRANODE_OUTBOX_SIZE) read_in_block_intra(*input_args->input_file, input_args->start_read_loc, input_args->stop_read_loc);
+        if ((!((file_read_occurences++)%PRINT_FILE_READ_PROGRESS_PERIOD)) && PRINT_FILE_READ_PROGRESS)
+            printf("%s: is currently at read location %d in [%d, %d) \n", debug_id, current_file_index, input_args->start_read_loc, input_args->stop_read_loc);
         //check to see if messages have been recieved 
         while (outboxSize > 0)
         {
@@ -85,8 +87,10 @@ void do_reduce(reduceArgs* input_args)
     int outboxHead = 0;
     int outboxTail = 0;
     int outboxSize = 0; 
+    current_file_index = input_args->start_read_loc; 
     MPI_Status send_status; 
     int send_complete_flag; 
+    int file_read_occurences = 0; 
     int is_last = 0; 
     //TODO: INDBOX (INTRA NODE OUTBOX)
     while(current_file_index<=(input_args->stop_read_loc-1) || (!robin_terminate_flag) || working_map.size())
@@ -121,6 +125,9 @@ void do_reduce(reduceArgs* input_args)
         }
         //Populate inter buffer if space in outbox 
         if (outboxSize != INTERNODE_OUTBOX_SIZE) read_in_block_inter(*input_args->input_file, input_args->start_read_loc, input_args->stop_read_loc);
+        if ((!((file_read_occurences++)%PRINT_FILE_READ_PROGRESS_PERIOD)) && PRINT_FILE_READ_PROGRESS)
+            printf("%s: is currently at read location %d in [%d, %d) terminate flag = %d\n", debug_id_inter, current_file_index, input_args->start_read_loc, input_args->stop_read_loc, 
+                robin_terminate_flag);
         //Remove recieved items from Inter-Outbox 
         while (outboxSize > 0) 
         {
@@ -285,7 +292,7 @@ void do_master()
     {
         MPI_Iprobe(master_robin, MPI_ANY_TAG, MPI_COMM_WORLD, &probe_flag, &incoming_status); 
         if (!probe_flag) continue; //no messages to recieve 
-        else printf("DELETE Master Batman Waiting: Flag = %d \n", incoming_tag); 
+        //else printf("DELETE Master Batman Waiting: Flag = %d \n", incoming_tag); 
         incoming_request = new MPI_Request; 
         incoming_source = incoming_status.MPI_SOURCE; 
         incoming_tag = incoming_status.MPI_TAG; 
@@ -396,6 +403,20 @@ int main(int argc, char **argv)
     master_robin = robin[0];
     int num_recievers = world_size-2; //soon this will be world size -2 !!!!
 
+    const double megabyte = 1024 * 1024;
+    struct sysinfo si;
+    sysinfo (&si);
+    int my_ram = si.totalram/megabyte; 
+    int* rams = new int[world_size]; 
+    MPI_Allgather(&my_ram, 1, MPI_INT, rams, 1, MPI_INT, MPI_COMM_WORLD); 
+    int ram_sum = 0; 
+    for (int i = 2; i<world_size; i++) ram_sum+=rams[i]; 
+    int* portions = new int[world_size-2]; 
+    
+    double portion = ram_sum / ((world_size-2)*4); 
+    for (int i = 0; i<(world_size-2); i++) portions[i] = rams[i+2]/portion; 
+    int my_portions = portions[my_rank -2]; 
+
 
 
     if (my_rank == 0)
@@ -426,8 +447,15 @@ int main(int argc, char **argv)
         file_len = (int)len;
         if (my_rank == 2) printf("File length is %d \n", file_len); 
         fl.seekg(0, ios::beg);
-        int my_block_size = file_len/num_recievers; 
-        int my_start_index = my_block_size*(my_rank-2); //(my_block_size*(my_rank-2)) !!!
+    
+        int my_block_size = file_len; 
+        my_block_size /= ((world_size-2)*4);
+        int single_portion = (file_len/((world_size-2)*4));
+        my_block_size *= my_portions; 
+        
+        //int my_start_index = my_block_size*(my_rank-2); //(my_block_size*(my_rank-2)) !!!
+        int my_start_index = 0; 
+        for (int i = 0; i<(my_rank-2); i++) my_start_index+= portions[i]*single_portion; 
         int my_stop_index = my_start_index+my_block_size; 
         input_args->start_read_loc = my_start_index; 
         input_args->stop_read_loc = my_stop_index; 
@@ -435,12 +463,14 @@ int main(int argc, char **argv)
         if (my_rank == (world_size-1)) my_stop_index = file_len; 
         if (std::find(batmen.begin(), batmen.end(), my_rank) != batmen.end())
         {
-            printf("I am a batman with rank # %d and processor name %s \n", my_rank, processor_name); 
+            printf("I am a batman with rank # %d and processor name %s\n", my_rank, processor_name); 
+            printf("Rank = %d: My ram space is %d, and I read in [%d, %d) \n", my_rank, my_ram, input_args->start_read_loc, input_args->stop_read_loc); 
             do_reduce(input_args); 
         }
         else 
         {
-            printf("I am a robin with rank # %d and processor name %s \n", my_rank, processor_name); 
+            printf("I am a robin with rank # %d and processor name %s\n", my_rank, processor_name); 
+            printf("Rank = %d: My ram space is %d, and I read in [%d, %d) \n", my_rank, my_ram, input_args->start_read_loc, input_args->stop_read_loc); 
             do_reduce_sidekick(input_args); 
         }
     }
