@@ -56,8 +56,8 @@ int world_size;
 #define POLL_FREQUENCY 5 
 #define MAX_NUM_SIZE 10
 #define MAX_WORD_SIZE 50 
-#define INPUT_FILE_PATH "./204178.txt" 
-#define OUTPUT_FILE_PATH "./204178.out"
+#define INPUT_FILE_PATH "2600.txt" //"./204178.txt" 
+#define OUTPUT_FILE_PATH "2600.out" //"./204178.out"
 #define PRINT_EXCHANGE_NUMS 1
 #define PRINT_BATMEN_REDUCER_MAPS 0
 #define PRINT_MASTER_MAP 0
